@@ -2,6 +2,7 @@ import pymupdf  # PyMuPDF
 from sentence_transformers import SentenceTransformer
 import faiss
 import numpy as np
+from dotenv import load_dotenv
 
 
 doc = pymupdf.open("data/book-of-short-stories.pdf")
@@ -57,3 +58,4 @@ D, I = index.search(
 for idx in I[0]:
     print("\n")
     print(chunks[idx])
+
