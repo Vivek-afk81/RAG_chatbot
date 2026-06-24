@@ -1,45 +1,59 @@
-from pipeline_rag.pdf_loader import extract_text
-from pipeline_rag.chunker import split_text
-from pipeline_rag.embeddings import build_index
-from pipeline_rag.retriever import retrieve
-from pipeline_rag.generator import answer_question
+import pymupdf  # PyMuPDF
+from sentence_transformers import SentenceTransformer
+import faiss
+import numpy as np
 
 
-class PDFChatbot:
+doc = pymupdf.open("data/book-of-short-stories.pdf")
+text = ""
 
-    def __init__(self, api_key):
-        self.api_key = api_key
-        self.chunks = None
-        self.index = None
-        self.history = []
+for page in doc:
+    text += page.get_text()
+doc.close()
 
-    def load_pdf(self, pdf_path):
 
-        text = extract_text(pdf_path)
+#chunking
+def chunk_text(text,chunk_size=500):
+    chunks=[]
 
-        self.chunks = split_text(text)
+    for i in range(0,len(text),chunk_size):
+        chunks.append(text[i:i+chunk_size])
+    return chunks
 
-        self.index, _ = build_index(
-            self.chunks
-        )
+chunks=chunk_text(text)
 
-    def ask(self, question):
+#Embeddings
 
-        context = retrieve(
-            question,
-            self.chunks,
-            self.index
-        )
+embedding_model = SentenceTransformer("all-MiniLM-L6-v2")
 
-        answer = answer_question(
-            question,
-            context,
-            self.api_key
-        )
+embeddings=embedding_model.encode(chunks)
 
-        self.history.append({
-            "question": question,
-            "answer": answer,
-        })
 
-        return answer
+#Faiss storing in vector db
+vectors = np.array(
+    embeddings
+).astype("float32")
+
+dimension = vectors.shape[1]
+index = faiss.IndexFlatL2(dimension)
+index.add(vectors)
+
+print(index.ntotal) 
+
+#Retrieval
+
+question = input("Ask: ")
+query_embedding = embedding_model.encode(
+    [question]
+)
+
+#search
+D, I = index.search(
+    np.array(query_embedding).astype("float32"),
+    k=3
+)
+
+#show chunks
+for idx in I[0]:
+    print("\n")
+    print(chunks[idx])
