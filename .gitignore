@@ -1,1 +1,4 @@
+# Virtual environment
+rag_venv/
+# Environment variables
 .env
