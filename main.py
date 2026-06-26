@@ -1,140 +1,100 @@
 import os
-import numpy as np
-import faiss
-import pymupdf
-
+import sys
 from dotenv import load_dotenv
 from huggingface_hub import InferenceClient
-from sentence_transformers import SentenceTransformer
 
+from rag.loader import load_pdf
+from rag.chunker import chunk_text, compare_chunk_sizes, CHUNK_PRESETS
+from rag.embedder import build_index, query_index
+from rag.search import semantic_search, answer_question
 
+# Setup
 
-# Load Environment Variables
 load_dotenv()
-
 HF_TOKEN = os.getenv("HF_TOKEN")
 
-client = InferenceClient(
-    api_key=HF_TOKEN
-)
+client = InferenceClient(api_key=HF_TOKEN)
+
+pdf_path = sys.argv[1] if len(sys.argv) > 1 else "data/book-of-short-stories.pdf"
 
 
+# Load PDF 
+print(f"\nLoading: {pdf_path}")
+text = load_pdf(pdf_path)
+print(f"Extracted {len(text):,} characters")
 
-# Extract PDF Text
-doc = pymupdf.open("data/book-of-short-stories.pdf")
+# Chunk Size Comparison Mode 
+print("\n--- Chunk Size Comparison ---")
+comparison = compare_chunk_sizes(text)
+for label, stats in comparison.items():
+    print(
+        f"  {label:<8} | chunk_size={stats['chunk_size']:>5} "
+        f"| chunks={stats['total_chunks']:>4} "
+        f"| avg_chars={stats['avg_chars']:>5}"
+    )
 
-text = ""
+print("\nWhich chunk size do you want to use?")
+print("  1. small  (300 chars  — more chunks, finer retrieval)")
+print("  2. medium (1000 chars — your original default)")
+print("  3. large  (2000 chars — fewer chunks, broader context)")
 
-for page in doc:
-    page_text = page.get_text()
+choice = input("\nEnter 1 / 2 / 3 [default: 2]: ").strip() or "2"
+size_map = {"1": "small", "2": "medium", "3": "large"}
+chosen = size_map.get(choice, "medium")
+preset = CHUNK_PRESETS[chosen]
 
-    if page_text:
-        text += page_text + "\n"
-
-doc.close()
-
-
-# Chunking
-
-def chunk_text(text, chunk_size=1000, overlap=200):
-    chunks = []
-
-    start = 0
-    while start < len(text):
-        end = start + chunk_size
-        chunks.append(text[start:end])
-        start += chunk_size - overlap
-
-    return chunks
-chunks = chunk_text(text)
-print(f"Total chunks: {len(chunks)}")
+chunks = chunk_text(text, **preset)
+print(f"\nUsing '{chosen}' chunks — {len(chunks)} total chunks")
 
 
-
-# Embedding Model
-embedding_model = SentenceTransformer("all-MiniLM-L6-v2")
-
-embeddings = embedding_model.encode(
-    chunks,normalize_embeddings=True
-)
-
-
-
-# FAISS Vector Database
-
-vectors = np.array(embeddings,dtype="float32")
-dimension = vectors.shape[1]
-index = faiss.IndexFlatIP(dimension)
-index.add(vectors)
+#  Build FAISS Index 
+print("Building FAISS index...")
+index = build_index(chunks)
 print(f"Vectors stored: {index.ntotal}")
 
 
+#  Chat Loop
+print("\nReady!")
+print("Commands: 'search' for semantic search mode | 'chunk' to re-pick chunk size | 'quit' to exit")
 
-# Chat Loop
 while True:
+    question = input("\nAsk: ").strip()
 
-    question = input("\nAsk: ")
+    if not question:
+        continue
 
     if question.lower() in ["quit", "exit"]:
         print("Goodbye!")
         break
 
-    # Query embedding
-    query_embedding = embedding_model.encode(
-        [question],normalize_embeddings=True)
+    #  Semantic Search Mode 
+    if question.lower() == "search":
+        query = input("  Search query: ").strip()
+        if not query:
+            continue
+        results = semantic_search(query, index, chunks, k=3)
+        print(f"\nTop {len(results)} passages for: '{query}'\n")
+        for r in results:
+            print(f"  [{r['rank']}] Score: {r['score']}")
+            print(f"  {r['passage'][:300].strip()}...")
+            print()
+        continue
 
-    query_vector = np.array(
-        query_embedding,
-        dtype="float32"
-    )
+    #  Re-pick Chunk Size 
+    if question.lower() == "chunk":
+        print("\n  1. small  2. medium  3. large")
+        choice = input("  Pick: ").strip()
+        chosen = size_map.get(choice, "medium")
+        preset = CHUNK_PRESETS[chosen]
+        chunks = chunk_text(text, **preset)
+        index = build_index(chunks)
+        print(f"  Rebuilt index with '{chosen}' chunks — {len(chunks)} total")
+        continue
 
-    # Search top chunks
-    D, I = index.search(
-        query_vector,
-        k=5
-    )
-
-    context = "\n\n".join(
-        [chunks[idx] for idx in I[0]]
-    )
-
-    # for debugging purpose
-    # print("\nRetrieved Context:")
-    # print(context[:1000])
-
-    prompt = f"""
-You are a helpful assistant.
-
-Answer ONLY using the provided context.
-
-If the answer is not present in the context, reply exactly:
-
-"I cannot find that information in the document."
-
-Context:
-{context}
-
-Question:
-{question}
-
-Answer:
-"""
-
+    # Answer Question 
     try:
-
-        response = client.chat.completions.create(
-            model="Qwen/Qwen2.5-7B-Instruct",
-            messages=[
-                {
-                    "role": "user",
-                    "content": prompt
-                }
-            ],
-            max_tokens=300,
-        )
-        answer = response.choices[0].message.content
+        answer = answer_question(question, index, chunks, client)
         print("\nAnswer:")
         print(answer)
-     #exception handling
     except Exception as e:
         print(f"Error: {e}")
