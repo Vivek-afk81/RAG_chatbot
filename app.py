@@ -64,7 +64,7 @@ def process_pdf(pdf_file, chunk_size_label):
         "384",
         str(preset["chunk_size"]),
         str(avg_chars),
-        f"✓ Index ready — {index.ntotal} vectors ({preset_key} chunks)",
+        f"Index ready — {index.ntotal} vectors ({preset_key} chunks)",
         comparison_rows,
     )
 
@@ -183,7 +183,7 @@ with gr.Blocks(title="RAG Document Q&A") as demo:
         with gr.Column(scale=1, min_width=240, elem_id="sidebar"):
 
             pdf_input = gr.File(
-                label="📂 Upload PDF",
+                label="UPLOAD PDF",
                 file_types=[".pdf"],
                 type="filepath",
                 height=100,         # compact upload box
@@ -197,7 +197,7 @@ with gr.Blocks(title="RAG Document Q&A") as demo:
                 elem_id="status",
             )
 
-            with gr.Accordion("⚙️ Chunk size & stats", open=False):
+            with gr.Accordion("Chunk size & stats", open=False):
                 chunk_radio = gr.Radio(
                     choices=["Small", "Medium", "Large"],
                     value="Medium",
